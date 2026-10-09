@@ -38,6 +38,22 @@ _EXE = 'python.exe' if os.name == 'nt' else 'python'
 PY = VENV / _BIN / _EXE
 PYPI_MIRROR = 'https://pypi.tuna.tsinghua.edu.cn/simple'
 
+# pip 源候选，按顺序回退。
+#
+# ⚠️ 为什么必须回退（2026-10-09 实测）
+#    清华镜像会**偶发抽风**：索引页拉取失败时 pip 只报
+#        ERROR: Could not find a version that satisfies the requirement ...
+#        ERROR: No matching distribution found for ...
+#    看起来像"包不存在"或"Python 版本不支持"，**完全看不出是镜像的问题**。
+#    实测同一个 venv、同一条命令，几分钟前全部失败、几分钟后全部成功。
+#    所以一键脚本必须能换源重试，否则使用者会卡在一个误导性的错误上。
+PYPI_INDEXES = [
+    ('清华', 'https://pypi.tuna.tsinghua.edu.cn/simple'),
+    ('阿里云', 'https://mirrors.aliyun.com/pypi/simple/'),
+    ('中科大', 'https://pypi.mirrors.ustc.edu.cn/simple/'),
+    ('官方', None),
+]
+
 DB = ROOT / 'data' / 'rag.db'
 CORPUS = ROOT / 'data' / 'corpus.json'
 XLSX = ROOT / 'data' / 'external' / 'job_posting_data.xlsx'
@@ -105,23 +121,47 @@ def need_venv() -> bool:
 
 # ─────────────── 各步骤 ───────────────
 
+def pip_install_requirements() -> int:
+    """
+    装依赖，**逐源回退**。
+
+    额外加了 --retries/--timeout 让坏源尽快暴露，而不是卡十分钟。
+    """
+    base = [PY, '-m', 'pip', 'install', '-r', 'requirements.txt',
+            '--no-cache-dir', '--retries', '2', '--timeout', '30']
+    last = 1
+    for name, url in PYPI_INDEXES:
+        args = list(base) + (['-i', url] if url else [])
+        print('  用 %s 源安装 …' % name)
+        last = run(args, quiet=True, check=False)
+        if last == 0:
+            return 0
+        print('  [!] %s 源失败，换下一个' % name)
+    return last
+
+
 def step_venv() -> int:
     hr('[1/5] 虚拟环境与依赖')
     if PY.is_file():
         print('  .venv 已存在，跳过创建：%s' % PY)
     else:
         print('  创建 .venv（用 %s）' % sys.executable)
+        if sys.version_info < (3, 10):
+            print('  [错误] 需要 Python 3.10 或更高，当前 %s' % sys.version.split()[0])
+            return 1
         rc = run([sys.executable, '-m', 'venv', str(VENV)])
         if rc != 0 or not PY.is_file():
-            print('  [错误] 创建虚拟环境失败。确认 Python >= 3.10 且可执行 `python -m venv`。')
+            print('  [错误] 创建虚拟环境失败。确认 `python -m venv` 可用。')
             return 1
-    print('  安装依赖（用清华镜像；默认源实测会卡十几分钟）…')
-    rc = run([PY, '-m', 'pip', 'install', '-q', '-r', 'requirements.txt',
-              '-i', PYPI_MIRROR, '--no-cache-dir'])
-    if rc != 0:
-        print('  [错误] 依赖安装失败。')
+    print('  安装依赖（默认源在国内会卡十几分钟，所以优先走镜像）…')
+    if pip_install_requirements() != 0:
+        print()
+        print('  [错误] 所有 pip 源都失败了。可以手动试：')
+        print('    %s -m pip install -r requirements.txt' % PY)
+        print('  或者指定自己能用的源：')
+        print('    %s -m pip install -r requirements.txt -i <你的源>/simple' % PY)
         return 1
-    print('  ✅ 依赖就绪')
+    print('  [OK] 依赖就绪')
     return 0
 
 
@@ -288,8 +328,10 @@ def step_check() -> int:
         except Exception as e:                                     # noqa: BLE001
             print('    [!] 读库失败：%s' % e)
 
+    has_key = bool(os.environ.get('DEEPSEEK_API_KEY')
+                   or _win_user_env('DEEPSEEK_API_KEY'))
     print('  DEEPSEEK_API_KEY  : %s'
-          % ('[OK] 已设置' if os.environ.get('DEEPSEEK_API_KEY')
+          % ('[OK] 已设置' if has_key
              else '[--] 未设置（/ask 不可用，其余不受影响）'))
     print()
     print('  下一步：')

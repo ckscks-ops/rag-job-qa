@@ -230,49 +230,79 @@ rag-job-qa/
 
 ## 五、快速开始
 
+### 一键运行（推荐）
+
+**Windows**：双击 `启动.bat`。没有数据库时会先问你要不要建库（约 25 分钟，会下载约 200 MB 模型）。
+
+**任意平台**：
+
 ```bash
-# 1. 建环境（已完成则跳过）
-python -m venv .venv
-.venv/Scripts/python.exe -m pip install -r requirements.txt \
-    -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir
+python setup.py all      # 建 venv + 装依赖 + 下模型 + 拉数据 + 建库（约 25 分钟）
+python setup.py serve    # 启动，然后打开 http://127.0.0.1:8000
+```
 
-# 下载 embedding 模型前必须设这两项（否则 HuggingFace 直连会 401）
-set HF_ENDPOINT=https://hf-mirror.com
-set HF_HUB_DISABLE_XET=1
+`setup.py` 只用标准库，随便哪个 Python 都能把它跑起来；
+每一步都会先检查产物在不在，**可以反复跑、失败后接着跑**。
 
-# 2. 验证 embedding 真的有语义能力（相近词应明显高于无关词）
-.venv/Scripts/python.exe tests/check_embedder.py
+```bash
+python setup.py check    # 只读自检：环境/依赖/数据/库 都到位了吗
+```
 
-# 3. 导出真实岗位数据（离线，不需要 RecruitOps 在运行）
-.venv/Scripts/python.exe src/export_recruitops.py --dedup \
-    --out data/prod_jobs.dedup.json
+> **pip 源会自动回退**（清华 → 阿里云 → 中科大 → 官方）。
+> 实测清华镜像会偶发抽风，而它失败时报的是
+> `No matching distribution found`——**看起来像包不存在或 Python 版本不支持，
+> 完全看不出是镜像的问题**，所以一键脚本必须能换源重试。
 
-# 4. 用真实 embedding 入库（约 8 分钟，5,209 个切块）
-.venv/Scripts/python.exe src/ingest.py --input data/prod_jobs.dedup.json \
-    --db data/rag.db --reset --embed fastembed --model BAAI/bge-small-zh-v1.5
+### 手动分步（想看每一步在做什么）
 
-# 5. 检查切块质量（应平均 >= 2 块/岗位、无超长块）
-.venv/Scripts/python.exe tests/check_chunking_real.py
+```bash
+python setup.py venv                 # 1. venv + 依赖
+python setup.py models               # 2. 下载 embedding / 精排模型
+.venv/Scripts/python.exe tests/check_embedder.py   #    验证向量真有语义能力
+python setup.py data                 # 3. 拉开源数据集并转换合并
+.venv/Scripts/python.exe tests/check_chunking_real.py  # 验证切块质量
+python setup.py ingest               # 4. 建库（约 25 分钟）
+.venv/Scripts/python.exe tests/smoke_test.py           # 全链路自测（应 17/17）
+python setup.py serve                # 5. 启动
+```
 
-# 6. 全链路自测（应 17/17 通过）
-.venv/Scripts/python.exe tests/smoke_test.py
+跑评测：
 
-# 7. 生成评测集并跑四路对比（含精排，会下载约 0.6 GB 重排模型，全程约 25 分钟）
+```bash
 .venv/Scripts/python.exe eval/build_eval_set.py
-.venv/Scripts/python.exe src/rerank.py --selftest          # 先验证重排模型有效
+.venv/Scripts/python.exe src/rerank.py --selftest     # 先验证重排模型有效
 .venv/Scripts/python.exe eval/evaluate.py --embed fastembed \
     --modes keyword vector hybrid rerank
-# 精排池消融（看延迟和精度的权衡）
+# 精排池消融
 .venv/Scripts/python.exe eval/evaluate.py --modes rerank --rerank-pool 10
-.venv/Scripts/python.exe eval/evaluate.py --modes rerank --rerank-pool 20
+```
 
-# 8. 端到端问答 / HTTP 服务 / 演示页
+命令行问答（不用起服务）：
+
+```bash
 set DEEPSEEK_API_KEY=sk-xxx
 .venv/Scripts/python.exe src/generate.py --query "找偏业务的数据分析岗，要给管理层做报表"
-.venv/Scripts/python.exe src/api.py
-# 然后打开 http://127.0.0.1:8000          ← 检索对比演示台（推荐先看这个）
-#          http://127.0.0.1:8000/docs     ← 接口文档
 ```
+
+### ⚠️ 可复现性边界（重要，别被绕进去）
+
+| 语料来源 | 条数 | 别人克隆后能否拿到 |
+|---|---|---|
+| 开源数据集（Boss直聘/智联/猎聘） | 9,218 | ✅ `setup.py data` 自动下载 |
+| 本机 RecruitOps 的 pg_dump 备份 | 2,116 | ❌ **依赖作者本机安装的软件**，别人跑不了 |
+| **合计（作者实测用的语料）** | **11,334** | — |
+
+**所以**：
+
+- **README 里的评测数字是在 11,334 条上跑的**（作者的完整语料）；
+- 你克隆后 `setup.py all` 得到的是 **9,218 条**（公开数据集），
+  数字会有差异——语料小了，干扰项少，通常还会**偏高一点**；
+- 流水线本身是**确定性的**（固定随机种子、无采样），
+  同一份语料重跑两次结果一致。
+
+**为什么仓库里不放数据**：`rag.db` 是 137 MB 的构建产物（别人能重建）；
+第三方 xlsx **原仓库没有 LICENSE**，不该由本仓库再分发；
+本机导出的那部分更是别人的机器上不存在。详见 `.gitignore` 里的说明。
 
 > **注意**：换 embedding 模型必须 `--reset` 重新入库，否则新旧向量维度不一致
 > （hash 占位实现是 256 维，bge-small-zh-v1.5 是 **512 维**）。
