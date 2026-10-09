@@ -226,6 +226,50 @@ def step_ingest() -> int:
     return rc
 
 
+def _port_owner_is_us(port: int) -> bool:
+    """该端口上是不是已经跑着本项目的服务？"""
+    import json as _json
+    import urllib.request
+    try:
+        with urllib.request.urlopen('http://127.0.0.1:%d/health' % port, timeout=3) as r:
+            d = _json.loads(r.read().decode('utf-8'))
+        return bool(d.get('status') == 'ok' and 'stats' in d)
+    except Exception:                                              # noqa: BLE001
+        return False
+
+
+def _pick_port(preferred: int) -> tuple[int, str]:
+    """
+    选一个能用的端口。
+
+    三种情况都要处理（2026-10-09 踩坑：我自己起的后台服务占着 8000，
+    使用者双击 `启动.bat` 时 uvicorn 直接绑不上，看起来就像"程序坏了"）：
+      1. 端口空闲                -> 直接用
+      2. 端口被本项目占用        -> 不用再起，直接打开浏览器
+      3. 端口被别的程序占用      -> 往后找一个空闲的
+    返回 (端口, 说明)；说明为 'already' 表示第 2 种情况。
+    """
+    import socket
+
+    def _free(p: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                s.bind(('127.0.0.1', p))
+                return True
+            except OSError:
+                return False
+
+    if _free(preferred):
+        return preferred, 'free'
+    if _port_owner_is_us(preferred):
+        return preferred, 'already'
+    for p in range(preferred + 1, preferred + 21):
+        if _free(p):
+            return p, 'moved'
+    return preferred, 'free'
+
+
 def step_serve(port: int = 8000, open_browser: bool = True) -> int:
     hr('启动服务')
     if need_venv():
@@ -241,6 +285,21 @@ def step_serve(port: int = 8000, open_browser: bool = True) -> int:
         print('  [!] 依赖不全，先跑：python setup.py venv')
         return 1
 
+    port, how = _pick_port(port)
+    url = 'http://127.0.0.1:%d' % port
+
+    if how == 'already':
+        print('  [OK] 服务**已经在运行**了（端口 %d 上是本项目）' % port)
+        print()
+        print('  演示页  : %s' % url)
+        print('  接口文档: %s/docs' % url)
+        if open_browser:
+            import webbrowser
+            webbrowser.open(url)
+        return 0
+    if how == 'moved':
+        print('  [!] 端口 %d 被别的程序占用了，改用 %d' % (8000, port))
+
     con = None
     try:
         import sqlite3
@@ -255,19 +314,27 @@ def step_serve(port: int = 8000, open_browser: bool = True) -> int:
         if con is not None:
             con.close()
 
-    url = 'http://127.0.0.1:%d' % port
     print()
-    print('  演示页  : %s' % url)
-    print('  接口文档: %s/docs' % url)
+    print('  [OK] 服务正在启动')
+    print('       演示页   : %s' % url)
+    print('       接口文档 : %s/docs' % url)
     print()
+    print('  浏览器会自动打开；没弹出来就手动访问上面的地址。')
     print('  首次提问要加载 embedding 模型（约 20 秒），之后就快了。')
-    has_key = bool(os.environ.get('DEEPSEEK_API_KEY') or _win_user_env('DEEPSEEK_API_KEY'))
+
+    # ⚠️ 措辞注意（2026-10-09 踩坑）
+    #    原来写成 "[提示] 没找到 DEEPSEEK_API_KEY ... set DEEPSEEK_API_KEY=sk-xxx"，
+    #    使用者读成了"这个程序要求我提供密钥"，以为跑不起来。
+    #    改为：服务已经起来的结论放最前，密钥只作为一个"可选"的附注。
+    has_key = bool(os.environ.get('DEEPSEEK_API_KEY')
+                   or _win_user_env('DEEPSEEK_API_KEY'))
     if has_key:
-        print('  DEEPSEEK_API_KEY 已找到，/ask（LLM 生成答案）可用。')
+        print('  LLM 问答（/ask）已就绪。')
     else:
-        print('  提示：/ask 需要 DEEPSEEK_API_KEY，/compare 和演示页不需要。')
+        print('  （可选，不影响使用）检索演示页、/compare、/search 都不需要 API Key；')
+        print('   只有 /ask 需要。想用就在系统里设一个 DEEPSEEK_API_KEY 再重开窗口。')
     print()
-    print('  按 Ctrl+C 停止。')
+    print('  停止服务：按 Ctrl+C，或直接关掉这个窗口。')
     print()
 
     if open_browser:
@@ -346,7 +413,59 @@ def step_check() -> int:
 
 # ─────────────── 入口 ───────────────
 
+class _Tee:
+    """
+    同时往控制台和日志文件写。
+
+    为什么要这个：双击 `启动.bat` 时窗口一闪而过，使用者只能看到最后一行，
+    而且控制台编码在中文 Windows 上经常让报错变成乱码。
+    有了日志文件，出问题时**直接把 logs/launcher.log 发出去就行**。
+    """
+
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, s):
+        for st in self.streams:
+            try:
+                st.write(s)
+                st.flush()
+            except Exception:                                      # noqa: BLE001
+                pass
+        return len(s)
+
+    def flush(self):
+        for st in self.streams:
+            try:
+                st.flush()
+            except Exception:                                      # noqa: BLE001
+                pass
+
+    def isatty(self):
+        return False
+
+
+def _setup_logging() -> Path | None:
+    logdir = ROOT / 'logs'
+    try:
+        logdir.mkdir(exist_ok=True)
+        path = logdir / 'launcher.log'
+        f = open(path, 'a', encoding='utf-8', errors='replace')
+        f.write('\n' + '=' * 72 + '\n')
+        f.write('启动时间: %s\n' % time.strftime('%Y-%m-%d %H:%M:%S'))
+        f.write('Python  : %s (%s)\n' % (sys.version.split()[0], sys.executable))
+        f.write('工作目录: %s\n' % ROOT)
+        f.write('=' * 72 + '\n')
+        sys.stdout = _Tee(sys.__stdout__, f)
+        sys.stderr = _Tee(sys.__stderr__, f)
+        return path
+    except Exception:                                              # noqa: BLE001
+        return None
+
+
 def main() -> int:
+    logpath = _setup_logging()
+
     ap = argparse.ArgumentParser(
         description='RAG 岗位问答系统 —— 一键环境准备 / 建库 / 启动',
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -363,32 +482,51 @@ def main() -> int:
     print('RAG 岗位智能问答系统 —— setup')
     print('=' * 72)
     print('  项目目录: %s' % ROOT)
+    if logpath:
+        print('  日志文件: %s' % logpath)
 
-    if args.cmd == 'check':
-        return step_check()
-    if args.cmd == 'venv':
-        return step_venv()
-    if args.cmd == 'models':
-        return step_models()
-    if args.cmd == 'data':
-        return step_data()
-    if args.cmd == 'ingest':
-        if args.force and DB.is_file():
-            print('  --force：删除已有数据库重建')
-            DB.unlink()
-        return step_ingest()
-    if args.cmd == 'serve':
-        return step_serve(args.port, not args.no_browser)
-    if args.cmd == 'all':
-        for step in (step_venv, step_models, step_data, step_ingest):
-            if step() != 0:
-                print()
-                print('  [中断] 上面这步失败了，修好再重跑 `python setup.py all`（已完成的步骤会跳过）。')
-                return 1
-        print()
-        print('  全部完成。现在可以：python setup.py serve')
+    try:
+        if args.cmd == 'check':
+            return step_check()
+        if args.cmd == 'venv':
+            return step_venv()
+        if args.cmd == 'models':
+            return step_models()
+        if args.cmd == 'data':
+            return step_data()
+        if args.cmd == 'ingest':
+            if args.force and DB.is_file():
+                print('  --force：删除已有数据库重建')
+                DB.unlink()
+            return step_ingest()
+        if args.cmd == 'serve':
+            return step_serve(args.port, not args.no_browser)
+        if args.cmd == 'all':
+            for step in (step_venv, step_models, step_data, step_ingest):
+                if step() != 0:
+                    print()
+                    print('  [中断] 上面这步失败了，修好再重跑 `python setup.py all`'
+                          '（已完成的步骤会跳过）。')
+                    return 1
+            print()
+            print('  全部完成。现在可以：python setup.py serve')
+            return 0
         return 0
-    return 0
+    except KeyboardInterrupt:
+        print('\n  已中断。')
+        return 130
+    except Exception:                                              # noqa: BLE001
+        import traceback
+        print()
+        print('=' * 72)
+        print('  出了未预期的错误，完整栈如下：')
+        print('=' * 72)
+        traceback.print_exc()
+        if logpath:
+            print()
+            print('  已写入日志: %s' % logpath)
+            print('  把这个文件发出去就能定位问题。')
+        return 1
 
 
 if __name__ == '__main__':

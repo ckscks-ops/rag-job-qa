@@ -37,6 +37,10 @@ eval/eval_set.json
 docs/export_verify.txt
 docs/corpus_analysis.txt
 
+# ── 运行时产物 ──
+logs/
+launcher.log
+
 # ── 编辑器 / 系统 ──
 .vscode/
 .idea/

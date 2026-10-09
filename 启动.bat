@@ -41,15 +41,24 @@ if not exist "data\rag.db" (
   if errorlevel 2 exit /b 0
   echo.
   "%PY%" setup.py all
-  if errorlevel 1 (
-    echo.
-    echo   [ERROR] Setup failed - see the messages above.
-    echo.
-    pause
-    exit /b 1
-  )
+  if errorlevel 1 goto failed
 )
 
 "%PY%" setup.py serve --port 8000
+if errorlevel 1 goto failed
+
+echo.
+echo   Server stopped.
 echo.
 pause
+exit /b 0
+
+:failed
+echo.
+echo   [ERROR] Something went wrong.
+echo.
+echo   Full log (send this file if you need help):
+echo     %~dp0logs\launcher.log
+echo.
+pause
+exit /b 1
