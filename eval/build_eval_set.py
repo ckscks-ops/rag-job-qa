@@ -171,28 +171,179 @@ QUERIES = [
          rule=dict(title_any=['数据科学', '数据分析师']), note='窄方向'),
 ]
 
+# ══════════════════════════════════════════════════════════════════════
+#  以下是**模板生成**的查询（为了让评测集的样本量够大、噪声够小）
+#
+#  为什么需要：50 条查询时，Hit@5 单条就值 0.02，池子消融那几个点的差异
+#  全在噪声里，得不出结论。扩到 200 条后单条权重降到 0.005，趋势才可信。
+#
+#  ⚠️ 诚实说明：模板生成的查询**多样性和真实性不如手写的 50 条**。
+#    它们的价值在于"标注客观"（用的是数据集自带的人工分类标签）
+#    和"样本量大"，而不是"像真人提问"。README 里要分开写，不能混着吹。
+# ══════════════════════════════════════════════════════════════════════
+
+GEN_LABELS = ['数据分析', '算法岗', '大模型相关', '经济金融', '生物统计']
+
+GEN_CITIES = ['北京', '上海', '深圳', '广州', '杭州', '成都']
+
+# 口语化说法：**刻意避开方向关键词本身**，考语义泛化
+GEN_PARAPHRASE = {
+    '数据分析': ['跟业务数据打交道、做报表看板的', '从数据里找规律支撑决策的',
+                 '负责数据指标体系和看板的', '做用户增长与留存分析的'],
+    '算法岗': ['搞机器学习和模型训练的', '做推荐或搜索排序的',
+               '搞计算机视觉的', '做语音或自然语言处理的'],
+    '大模型相关': ['做大模型应用落地的', '搞智能问答和知识库的',
+                   '做 Agent 或多模态的', '调大模型接口做产品的'],
+    '经济金融': ['金融行业里的技术岗', '做风控和量化分析的',
+                 '银行证券保险相关的岗位', '做投资分析数据支持的'],
+    '生物统计': ['医药健康数据相关的', '做临床试验统计分析的',
+                 '生物信息分析方向', '医疗器械数据处理'],
+}
+
+GEN_TECH = {
+    '数据分析': ['SQL', 'Python', 'Excel', 'Tableau'],
+    '算法岗': ['PyTorch', 'TensorFlow', 'C++', 'OpenCV'],
+    '大模型相关': ['Transformer', 'LangChain', 'RAG', 'Python'],
+    '经济金融': ['SQL', 'Python', '风控建模', '量化'],
+    '生物统计': ['SAS', 'R', 'Python', '统计分析'],
+}
+
+GEN_COND = [('本科能投的', ['本科及以上', '本科以上']),
+            ('要求硕士的', ['硕士及以上']),
+            ('专业不限的', ['专业不限', '不限专业'])]
+
+GEN_SALARY = [(15000, '月薪 1.5 万以上'), (25000, '月薪 2.5 万以上'),
+              (40000, '月薪 4 万以上')]
+
+# 对照类：窄方向（考精度，别把无关岗位排前面）
+GEN_NARROW = [
+    ('多模态大模型算法', dict(title_any=['多模态'])),
+    ('具身智能 / 机器人算法', dict(title_any=['具身智能', '机器人'])),
+    ('光学相关的技术岗', dict(title_any=['光学'])),
+    ('嵌入式或底层驱动', dict(raw_any=['嵌入式', '单片机', 'STM32'])),
+    ('自动驾驶 / 智能驾驶', dict(title_any=['自动驾驶', '智能驾驶'])),
+    ('推荐算法', dict(title_any=['推荐'])),
+    ('搜索算法', dict(title_any=['搜索'])),
+    ('语音识别 / 合成', dict(title_any=['语音'])),
+    ('测试开发 / 质量保障', dict(raw_any=['测试开发', '自动化测试', '质量保障'])),
+    ('大数据平台 / 数据仓库', dict(title_any=['大数据', '数据仓库', '数据平台'])),
+]
+
+
+def generate_queries(con, target_extra: int = 165) -> list[dict]:
+    """
+    模板生成补充查询。
+
+    每一条都会先用 resolve_rule 试解析，**相关集为空的直接丢掉**——
+    与其让后面报错，不如这里就不生成。
+    """
+    out: list[dict] = []
+
+    def add(cat, query, rule, note='模板生成'):
+        try:
+            n = len(resolve_rule(con, rule))
+        except Exception:                                          # noqa: BLE001
+            n = 0
+        if n == 0:
+            return False
+        out.append(dict(category=cat, query=query, rule=rule,
+                        note='%s（相关集 %d 条）' % (note, n)))
+        return True
+
+    # 1) 方向 × 城市
+    for lb in GEN_LABELS:
+        for ct in GEN_CITIES:
+            add('生成·方向城市', '我想找%s方向、%s的岗位' % (lb, ct),
+                dict(label_any=[lb], city_any=[ct]))
+
+    # 2) 方向 × 学历/专业条件
+    for lb in GEN_LABELS:
+        for label, kws in GEN_COND:
+            add('生成·方向条件', '%s方向，%s' % (lb, label),
+                dict(label_any=[lb], raw_any=kws))
+
+    # 3) 方向 × 技术栈
+    for lb in GEN_LABELS:
+        for tech in GEN_TECH[lb]:
+            add('生成·方向技术', '%s方向，要会 %s' % (lb, tech),
+                dict(label_any=[lb], raw_any=[tech]))
+
+    # 4) 方向 × 薪资（只有社招岗位带薪资）
+    for lb in GEN_LABELS:
+        for sal, desc in GEN_SALARY:
+            add('生成·方向薪资', '%s方向，%s' % (lb, desc),
+                dict(label_any=[lb], salary_min_gte=sal))
+
+    # 5) 方向的口语化改写（不含方向关键词）
+    for lb in GEN_LABELS:
+        for phrase in GEN_PARAPHRASE[lb]:
+            add('生成·改写', '我想找%s岗位' % phrase, dict(label_any=[lb]))
+
+    # 6) 公司类：按岗位数取头部的公司
+    rows = con.execute(
+        "SELECT company, COUNT(*) c FROM documents "
+        "WHERE company IS NOT NULL AND company != '未知公司' AND LENGTH(company) >= 4 "
+        "GROUP BY company HAVING c >= 8 ORDER BY c DESC LIMIT 24").fetchall()
+    for r in rows:
+        add('生成·公司', '%s 有哪些岗位' % r['company'],
+            dict(company_any=[r['company']]))
+
+    # 7) 城市类
+    for ct in ['北京', '上海', '深圳', '广州', '杭州', '成都',
+               '武汉', '西安', '南京', '苏州', '天津']:
+        add('生成·城市', '%s有什么岗位' % ct, dict(city_any=[ct]))
+
+    # 8) 批次类（校招）
+    #    ⚠️ 不加「社招岗位」：它的相关集是 9,218 条（占全库 81%），
+    #    太退化，Precision@5 测不出任何东西。
+    add('生成·批次', '2027 届校招岗位', dict(job_type_any=['formal']))
+
+    # 9) 对照类：窄方向
+    for q, rule in GEN_NARROW:
+        add('对照类', q, rule, note='窄方向')
+    for q, rule in [
+        ('嵌入式软件 / 驱动开发', dict(title_any=['嵌入式', '驱动'])),
+        ('前端 / 客户端开发', dict(title_any=['前端', '客户端', 'iOS', 'Android'])),
+        ('硬件 / 电路 / 电气', dict(title_any=['硬件', '电路', '电气', '电控'])),
+    ]:
+        add('对照类', q, rule, note='窄方向')
+
+    return out[:target_extra] if target_extra else out
+
 
 def main() -> int:
     ap = argparse.ArgumentParser(description='生成/校验评测集')
     ap.add_argument('--db', default=str(ROOT / 'data' / 'rag.db'))
     ap.add_argument('--out', default=str(ROOT / 'eval' / 'eval_set.json'))
     ap.add_argument('--check-only', action='store_true')
+    ap.add_argument('--no-generate', action='store_true',
+                    help='只用 50 条手写查询，不做模板扩充')
+    ap.add_argument('--extra', type=int, default=165, help='模板扩充的条数上限')
     args = ap.parse_args()
 
     con = connect(args.db)
     total_docs = con.execute('SELECT COUNT(*) FROM documents').fetchone()[0]
+
+    n_hand = len(QUERIES)
+    gen = [] if args.no_generate else generate_queries(con, args.extra)
+    all_q = QUERIES + gen
 
     print('=' * 76)
     print('评测集构建')
     print('=' * 76)
     print('  数据库    : %s' % args.db)
     print('  岗位总数  : %d' % total_docs)
-    print('  查询条数  : %d' % len(QUERIES))
+    print('  手写查询  : %d' % n_hand)
+    print('  模板扩充  : %d  %s' % (len(gen), '(已关闭)' if args.no_generate else ''))
+    print('  合计      : %d' % len(all_q))
+    print()
+    print('  ⚠️ 模板生成的部分"标注客观但提问方式不如手写自然"，')
+    print('     README 里要分开说明，别混在一起夸大。')
     print()
 
     rows, empty, huge = [], [], []
     by_cat: dict[str, list[int]] = {}
-    for q in QUERIES:
+    for q in all_q:
         keys = resolve_rule(con, q['rule'])
         n = len(keys)
         by_cat.setdefault(q['category'], []).append(n)
@@ -205,29 +356,22 @@ def main() -> int:
             huge.append((q['query'], n))
         rows.append({**q, 'n_relevant': n})
 
-    print('  %-16s %-4s %-6s %s' % ('类型', 'n', '相关集', '查询'))
-    print('  ' + '-' * 70)
-    for r in rows:
-        flag = '  ' if r['n_relevant'] else '❗'
-        print('  %s%-14s %-4d %-6d %s'
-              % (flag, r['category'], r['n_relevant'],
-                 r['n_relevant'], r['query'][:34]))
-
-    print()
-    print('  各类型相关集大小（中位）：')
+    print('  各类型相关集大小：')
+    print('    %-16s %-5s %-8s %-8s %s' % ('类型', 'n', '中位', '最小', '最大'))
+    print('    ' + '-' * 58)
     for cat, ns in sorted(by_cat.items()):
-        ns_sorted = sorted(ns)
-        print('    %-16s 中位 %4d   最小 %4d   最大 %4d'
-              % (cat, ns_sorted[len(ns_sorted) // 2], ns_sorted[0], ns_sorted[-1]))
+        s = sorted(ns)
+        print('    %-16s %-5d %-8d %-8d %d'
+              % (cat, len(s), s[len(s) // 2], s[0], s[-1]))
 
     print()
     if empty:
         print('  ❗ %d 条查询解析出空相关集（必须修规则）：' % len(empty))
-        for q in empty:
+        for q in empty[:10]:
             print('        - %s' % q)
     if huge:
         print('  ❗ %d 条查询相关集过大（规则太宽）：' % len(huge))
-        for q, n in huge:
+        for q, n in huge[:10]:
             print('        - %s (%d)' % (q, n))
     if not empty and not huge:
         print('  ✅ 所有查询的相关集都非空且规模合理')
@@ -241,7 +385,7 @@ def main() -> int:
         [{k: v for k, v in r.items() if k != 'n_relevant'} for r in rows],
         ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     print()
-    print('  已写出: %s' % out)
+    print('  已写出: %s（%d 条）' % (out, len(rows)))
     return 1 if (empty or huge) else 0
 
 

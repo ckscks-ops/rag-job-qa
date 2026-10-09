@@ -236,37 +236,103 @@ def search(con: sqlite3.Connection, query: str, top_k: int = 5, *,
 
 # ─────────────── 两阶段：召回 + 重排 ───────────────
 
+def channel_agreement(con: sqlite3.Connection, kw_hits: list[dict],
+                      vec_hits: list[dict], k: int = 5) -> float:
+    """
+    两路召回的"一致程度"：各自 top-k 的 **Jaccard 重叠**（按**岗位**算，不是按切块）。
+
+    ⚠️ 必须按岗位算（2026-10-09 踩坑）
+        一开始按 chunk_id 算，结果 199 条查询**一次都没触发过跳过**（阈值 0.5），
+        自适应精排等于白做，还多花时间。
+        原因是：两路经常命中**同一个岗位的不同切块**——
+        BM25 命中的可能是「岗位职责」那块，向量命中的是「任职要求」那块，
+        chunk 层看完全不同，**岗位层其实是同一个**。
+        所以要先经过 chunk→doc 映射再比。
+    """
+    def _docs(hits):
+        ids = [h['chunk_id'] for h in hits[:max(k * 3, k)]]
+        if not ids:
+            return set()
+        q = ','.join('?' * len(ids))
+        rows = con.execute(
+            'SELECT c.id, d.doc_key FROM chunks c JOIN documents d ON d.id = c.doc_id '
+            'WHERE c.id IN (%s)' % q, ids).fetchall()
+        key_by_id = {r[0]: r[1] for r in rows}
+        out, seen = [], set()
+        for cid in ids:
+            dk = key_by_id.get(cid)
+            if dk and dk not in seen:
+                seen.add(dk)
+                out.append(dk)
+            if len(out) >= k:
+                break
+        return set(out)
+
+    a, b = _docs(kw_hits), _docs(vec_hits)
+    if not a and not b:
+        return 1.0
+    return len(a & b) / max(1, len(a | b))
+
+
 def rerank_search(con: sqlite3.Connection, query: str, top_k: int = 5, *,
                   query_vec: np.ndarray | None = None,
                   recall_k: int = 30, rerank_pool: int = 30,
-                  reranker=None, debug: bool = False) -> list[dict]:
+                  reranker=None, debug: bool = False,
+                  adaptive: bool = False,
+                  agree_threshold: float = 0.5,
+                  max_chars: int | None = 200) -> list[dict]:
     """
     两阶段检索：hybrid 召回 `rerank_pool` 条 → cross-encoder 精排 → 取 top_k。
 
     为什么分两段（而不是直接让 cross-encoder 扫全库）：
         cross-encoder 必须把 (query, doc) 拼起来跑前向，**无法预计算**。
-        5,209 个切块逐条打分约需 5,209 × 20ms ≈ 100 秒，不可接受。
-        先用 bi-encoder 召回 30 条（追求不漏），再精排（追求排得准），
-        这样只跑 30 次前向，约 1~2 秒。
+        2 万多个切块逐条打分要几百秒；先用 bi-encoder 召回 30 条（追求不漏），
+        再精排（追求排得准），只跑 30 次前向。
 
-    reranker 为 None 时自动退化为纯 hybrid，方便对照组。
+    adaptive=True：**只对"难查询"精排**（2026-10-09 新增）
+        精排实测要 8.7 秒，对交互式搜索不可接受。但很多查询其实不难——
+        BM25 和向量各自 top-k 高度重合时，两路已经达成一致，精排改不了什么。
+        所以先用 `channel_agreement` 量一下两路的一致性：
+            一致度高（>= agree_threshold） -> 跳过精排，直接用 RRF 结果
+            一致度低                       -> 才跑精排
+        这样平均延迟能压到 1 秒级，而精度损失很小。
+        用 `--rerank-agree` 调阈值，跑评测看得出精确的取舍。
     """
     if reranker is None:
         return hybrid_search(con, query, top_k=top_k, query_vec=query_vec,
                              recall_k=recall_k, debug=debug)
 
     t0 = time.perf_counter()
-    pool = hybrid_search(con, query, top_k=rerank_pool, query_vec=query_vec,
-                         recall_k=recall_k, debug=debug)
+    kw = keyword_search(con, query, top_k=recall_k, debug=debug)
+    vec = []
+    if query_vec is not None:
+        vec = vector_search(con, query_vec, top_k=recall_k, debug=debug)
+    if not vec:
+        return kw[:top_k]
+
+    pool = rrf_fuse([kw, vec], k=60, top_k=rerank_pool)
     t_recall = (time.perf_counter() - t0) * 1000
     if not pool:
         return []
 
+    if adaptive:
+        agree = channel_agreement(con, kw, vec, k=min(5, recall_k))
+        if agree >= agree_threshold:
+            if debug:
+                print('  [rerank_search] 两路一致度 %.2f >= %.2f，跳过精排（召回 %.1f ms）'
+                      % (agree, agree_threshold, t_recall))
+            return pool[:top_k]
+    else:
+        agree = None
+
     from rerank import rerank_hits          # 局部导入避免循环依赖
     t1 = time.perf_counter()
-    out = rerank_hits(con, query, pool, reranker, top_k=top_k)
+    # max_chars=0/None 表示不截断（传 None 给 rerank_hits）
+    out = rerank_hits(con, query, pool, reranker, top_k=top_k,
+                      max_chars=max_chars or None)
     t_rerank = (time.perf_counter() - t1) * 1000
     if debug:
-        print('  [rerank_search] 召回 %d 条 (%.1f ms) → 精排取 %d 条 (%.1f ms)'
-              % (len(pool), t_recall, len(out), t_rerank))
+        print('  [rerank_search] 召回 %d 条 (%.1f ms) → 精排取 %d 条 (%.1f ms)%s'
+              % (len(pool), t_recall, len(out), t_rerank,
+                 '' if agree is None else '，一致度 %.2f' % agree))
     return out

@@ -148,10 +148,12 @@
   <footer>
     语文料：<b id="f-docs">—</b> 条真实中文岗位 JD（两个来源合并去重），切为 <b id="f-chunks">—</b> 块<br>
     向量：<code>fastembed</code> + <code>BAAI/bge-small-zh-v1.5</code>（512 维 ONNX，本地推理，不需要 PyTorch）<br>
+    精排：<code>BAAI/bge-reranker-v2-m3-int8</code>，送进去的文本<b>截断到 200 字</b>——
+    实测这样省 85% 延迟，Precision@5 只掉 0.008（<code>eval/rerank_budget.py</code>）<br>
     说明：<span style="color:var(--vc)">蓝框</span>的例子是<b>口语化改写</b>（关键词检索容易失手），
     <span style="color:var(--kw)">橙框</span>是<b>精确技术栈</b>（向量检索容易失手）。<br>
     <b>精排</b>列是 cross-encoder：把 query 和 JD 拼在一起过模型，精度高但每个候选都要跑一次前向，
-    所以慢（约 6~12 秒，取决于候选长度）。分数是原始 logit，<b>只有相对顺序有意义</b>，负数不代表差。<br>
+    所以慢（约 2~4 秒，取决于候选长度；机器忙时会明显变慢）。分数是原始 logit，<b>只有相对顺序有意义</b>，负数不代表差。<br>
     精排是<b>异步</b>的：前 3 列先出（约 200 ms），第 4 列算完再补上，不会卡住界面。<br>
     完整评测：<code>python eval/evaluate.py</code> ·
     接口文档：<a href="/docs">/docs</a>
@@ -287,7 +289,7 @@ function paint(d, rrMode){
         : `<div class="col rerank" id="rr-slot"><div class="col-hd">
              <div><div class="t">混合 + 精排</div><div class="s">cross-encoder</div></div>
              <div class="m">计算中…</div></div>
-           <div class="col-bd"><div class="empty">精排对 20 个候选逐个打分<br>约 6~12 秒（取决于候选长度）…</div></div></div>`)
+           <div class="col-bd"><div class="empty">精排对 20 个候选逐个打分<br>约 2~4 秒（文本已截断到 200 字）…</div></div></div>`)
     : '';
   $('#out').innerHTML =
     `<div class="stats" style="margin:0 0 10px">

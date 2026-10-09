@@ -254,8 +254,11 @@ def compare(q: str = Query(..., min_length=1, description='自然语言查询'),
             from rerank import rerank_hits
             t0 = time.perf_counter()
             pool = fused[:rerank_pool]
+            # max_chars=200：截断送进精排的文本。
+            # 实测把 20 个候选的精排从 ~6 秒压到 ~1.5 秒，Precision@5 只掉 0.008
+            # （见 eval/rerank_budget.py 与 src/rerank.py 里的定标注释）。
             rr_pool_hits = rerank_hits(con, q, pool, reranker_fn(),
-                                       top_k=rerank_pool)
+                                       top_k=rerank_pool, max_chars=200)
             t_rerank = (time.perf_counter() - t0) * 1000
             ids |= {h['chunk_id'] for h in rr_pool_hits}
 

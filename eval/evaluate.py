@@ -46,6 +46,35 @@ from schema import connect                                            # noqa: E4
 # 因为 rerank 那条路召回了更多候选，而不是重排的功劳。
 RECALL_K = 30
 
+# 自适应精排的统计（每个 eval 跑之前重置）
+SKIP_STATS = {'total': 0, 'skipped': 0}
+
+
+def _rerank_branch(con, query, qvec, pool_k, reranker, mode, agree_threshold,
+                   max_chars=200):
+    """精排 / 自适应精排共用的召回+决策逻辑。返回 chunk 级命中列表。"""
+    from retrieval import channel_agreement
+    kw = keyword_search(con, query, top_k=RECALL_K)
+    vec = vector_search(con, qvec, top_k=RECALL_K) if qvec is not None else []
+    pool = rrf_fuse([kw, vec], k=60, top_k=pool_k) if vec else kw[:pool_k]
+    if not pool:
+        return []
+
+    skip = False
+    if mode == 'rerank_adaptive':
+        SKIP_STATS['total'] += 1
+        if reranker is not None:
+            agree = channel_agreement(con, kw, vec, k=min(5, RECALL_K))
+            skip = agree >= agree_threshold
+            if skip:
+                SKIP_STATS['skipped'] += 1
+
+    if reranker is None or skip:
+        return pool
+    from rerank import rerank_hits
+    return rerank_hits(con, query, pool, reranker, top_k=pool_k,
+                       max_chars=max_chars or None)
+
 
 # ─────────────── 评测集 ───────────────
 # 每条：一个自然语言查询 + 期望命中的 doc_key 列表（人工标注）
@@ -116,6 +145,8 @@ def resolve_rule(con, rule: dict) -> set[str]:
         city_any                             按城市
         raw_any / raw_all                   按 JD 正文
         job_type_any                         按批次
+        label_any                            按方向标签（仅开源数据集自带）
+        salary_min_gte / salary_min_lte      按薪资下限（仅社招岗位有）
     """
     where, params = [], []
 
@@ -152,6 +183,14 @@ def resolve_rule(con, rule: dict) -> set[str]:
         where.append("json_extract(d.metadata, '$.label') IN (%s)"
                      % ','.join('?' * len(labels)))
         params.extend(labels)
+
+    # 数值条件：薪资下限（只有开源数据集那批社招岗位带薪资）
+    if rule.get('salary_min_gte') is not None:
+        where.append("json_extract(d.metadata, '$.salary_min') >= ?")
+        params.append(float(rule['salary_min_gte']))
+    if rule.get('salary_min_lte') is not None:
+        where.append("json_extract(d.metadata, '$.salary_min') <= ?")
+        params.append(float(rule['salary_min_lte']))
 
     sql = 'SELECT d.doc_key FROM documents d'
     if where:
@@ -199,32 +238,31 @@ def materialize_eval_set(con, eval_set: list[dict]) -> list[dict]:
 # ─────────────── 检索模式 ───────────────
 
 def run_search(con, query: str, mode: str, embed_fn, top_k: int,
-               reranker=None, rerank_pool: int | None = None) -> list[dict]:
+               reranker=None, rerank_pool: int | None = None,
+               rerank_agree: float = 0.5,
+               rerank_max_chars: int | None = 200) -> list[dict]:
     """
     返回命中的**岗位级**结果（同一岗位多个块只算一次，取最好排名）。
 
     mode:
-        keyword  BM25 关键词
-        vector   向量余弦
-        hybrid   BM25 + 向量，RRF 融合
-        rerank   hybrid 召回 rerank_pool 条 → cross-encoder 精排
+        keyword          BM25 关键词
+        vector           向量余弦
+        hybrid           BM25 + 向量，RRF 融合
+        rerank           hybrid 召回 rerank_pool 条 → cross-encoder 精排
+        rerank_adaptive  只在"两路不一致"时才精排（省时间）
     """
     pool_k = rerank_pool or RECALL_K
     qvec = None
-    if mode in ('vector', 'hybrid', 'rerank') and embed_fn is not None:
+    if mode in ('vector', 'hybrid', 'rerank', 'rerank_adaptive') and embed_fn is not None:
         qvec = embed_fn(query)
 
     if mode == 'keyword' or qvec is None:
         hits = keyword_search(con, query, top_k=RECALL_K)
     elif mode == 'vector':
         hits = vector_search(con, qvec, top_k=RECALL_K)
-    elif mode == 'rerank':
-        pool = hybrid_search(con, query, top_k=pool_k, query_vec=qvec)
-        if reranker is None:
-            hits = pool
-        else:
-            from rerank import rerank_hits
-            hits = rerank_hits(con, query, pool, reranker, top_k=pool_k)
+    elif mode in ('rerank', 'rerank_adaptive'):
+        hits = _rerank_branch(con, query, qvec, pool_k, reranker, mode,
+                              rerank_agree, rerank_max_chars)
     else:
         kw = keyword_search(con, query, top_k=RECALL_K)
         vec = vector_search(con, qvec, top_k=RECALL_K)
@@ -283,7 +321,11 @@ def metrics_for(ranked_keys: list[str], relevant: set[str], k: int) -> dict:
 
 def evaluate(con, eval_set: list[dict], modes: list[str], embed_fn,
              top_k: int = 5, verbose: bool = False, reranker=None,
-             rerank_pool: int | None = None) -> dict:
+             rerank_pool: int | None = None,
+             rerank_agree: float = 0.5,
+             rerank_max_chars: int | None = 200) -> dict:
+    SKIP_STATS['total'] = 0
+    SKIP_STATS['skipped'] = 0
     results = {m: {'hit': [], 'precision': [], 'recall': [], 'rr': [],
                    'latency': []} for m in modes}
     by_cat = {}                      # category -> mode -> 指标列表
@@ -300,7 +342,7 @@ def evaluate(con, eval_set: list[dict], modes: list[str], embed_fn,
         for mode in modes:
             t0 = time.perf_counter()
             ranked = run_search(con, q, mode, embed_fn, top_k, reranker,
-                                rerank_pool)
+                                rerank_pool, rerank_agree, rerank_max_chars)
             dt = (time.perf_counter() - t0) * 1000
             keys = [r['doc_key'] for r in ranked]
             m = metrics_for(keys, relevant, top_k)
@@ -356,6 +398,11 @@ def main() -> int:
                     help='rerank 模式用的 cross-encoder 模型')
     ap.add_argument('--rerank-pool', type=int, default=None,
                     help='rerank 候选池大小（默认与其他模式一致）；用于池子消融实验')
+    ap.add_argument('--rerank-agree', type=float, default=0.5,
+                    help='自适应精排阈值：两路 top-5 的 Jaccard 重叠 >= 该值就跳过精排')
+    ap.add_argument('--rerank-max-chars', type=int, default=200,
+                    help='送入精排的文本截断长度（0 = 不截断）。'
+                         '实测截断到 200 字省 85%% 延迟，P@5 只掉 0.008，见 eval/rerank_budget.py')
     ap.add_argument('--top-k', type=int, default=5)
     ap.add_argument('--embed', default='fastembed',
                     help='fastembed(推荐) / hash / st / api')
@@ -410,7 +457,15 @@ def main() -> int:
 
     summary, cat_summary = evaluate(con, eval_set, args.modes, embed_fn,
                                     top_k=args.top_k, verbose=args.verbose,
-                                    reranker=reranker, rerank_pool=args.rerank_pool)
+                                    reranker=reranker, rerank_pool=args.rerank_pool,
+                                    rerank_agree=args.rerank_agree,
+                                    rerank_max_chars=args.rerank_max_chars)
+
+    if 'rerank_adaptive' in args.modes:
+        n_t, n_s = SKIP_STATS['total'], SKIP_STATS['skipped']
+        print()
+        print('  自适应精排（阈值 %.2f）：%d 条查询里跳过了 %d 条（%.0f%%）'
+              % (args.rerank_agree, n_t, n_s, 100.0 * n_s / n_t if n_t else 0))
 
     print()
     print('=' * 74)

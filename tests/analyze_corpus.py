@@ -1,9 +1,17 @@
 # -*- coding: utf-8 -*-
 """去重后语料质量分析 —— 决定 RAG 语料怎么裁。"""
-import json, re, collections, statistics, io
+import json, re, collections, statistics, io, sys
 from pathlib import Path
 
-P = Path(r'C:\Users\ckscks\PycharmProjects\rag-job-qa\data\prod_jobs.json')
+# 路径相对脚本，别写死绝对路径（别人克隆后路径完全不同）
+ROOT = Path(__file__).resolve().parent.parent
+P = ROOT / 'data' / 'prod_jobs.json'
+if not P.is_file():
+    P = ROOT / 'data' / 'corpus.json'
+if not P.is_file():
+    print('找不到 data/prod_jobs.json 或 data/corpus.json')
+    print('先运行：python setup.py data')
+    sys.exit(1)
 jobs = json.loads(P.read_text(encoding='utf-8'))
 
 # 优先用导出器产出的去重文件，保证和入库用的语料完全一致

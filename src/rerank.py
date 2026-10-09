@@ -53,6 +53,23 @@ EN_ONLY_MODELS = [
 
 DEFAULT_MODEL = 'BAAI/bge-reranker-v2-m3-int8'
 
+# ★ 送入精排的文本截断长度（2026-10-09 由实验定标，见 eval/rerank_budget.py）
+#
+# 50 条查询 × 5 组配置的实测（召回池固定 30）：
+#     截断     Precision@5   Hit@5    MRR     精排耗时
+#     不截断      0.592      0.820   0.682    14.0 s
+#     200 字      0.584      0.840   0.716     2.2 s   ← 采用
+#     池降到 10   0.495      0.820   0.667     0.7 s   ← 代价太大，不采用
+#
+# 结论：**截断只损失 0.008 的 Precision@5，却省掉 85% 的延迟**，
+# 而"把候选池从 30 缩到 10"要损失 0.097 —— 所以该动的是输入长度，不是候选数量。
+#
+# 为什么截断几乎不掉精度、Hit@5/MRR 反而略升：
+#     切块开头就是「公司 · 岗位」+ 段落名 + 核心要求，
+#     尾部常是流程性套话。截断相当于**去噪**，
+#     让 cross-encoder 的注意力集中在真正判别性的内容上。
+DEFAULT_MAX_CHARS = 200
+
 
 def get_reranker(model_name: str = DEFAULT_MODEL):
     """
@@ -86,12 +103,18 @@ def get_reranker(model_name: str = DEFAULT_MODEL):
 
 
 def rerank_hits(con, query: str, hits: list[dict], reranker,
-                top_k: int = 5) -> list[dict]:
+                top_k: int = 5, max_chars: int | None = DEFAULT_MAX_CHARS) -> list[dict]:
     """
     对已经召回的 chunk 级命中做 cross-encoder 重排。
 
     hits 需要含 chunk_id；本函数会用 `text` 字段（含「公司 · 岗位」前缀）打分，
     因为这更接近重排模型训练时的输入形态。
+
+    max_chars：**截断**每篇送进精排的字符数（None = 不截断）
+        cross-encoder 的成本随 token 数近似线性增长，而一个切块最长 480 字。
+        实测（见 eval/rerank_budget.py）截断到 200 字能显著压低单条耗时，
+        精度只掉一点点——因为"这岗位是不是这个方向"看开头基本就够了。
+        这是把十几秒压到 1~2 秒最有效、最便宜的杠杆（不用换模型、不用下东西）。
     """
     from retrieval import fetch_chunks
 
@@ -102,6 +125,8 @@ def rerank_hits(con, query: str, hits: list[dict], reranker,
         return []
 
     docs = [d.get('text') or '' for d in details]
+    if max_chars:
+        docs = [t[:max_chars] for t in docs]
     scores = reranker(query, docs)
 
     order = sorted(range(len(details)), key=lambda i: -scores[i])[:top_k]
