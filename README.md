@@ -416,6 +416,34 @@ sqlite3.OperationalError: cannot DELETE from contentless fts5 table: chunks_fts
 > "静默合并"这类失败最危险——**它不报错，只是悄悄少了几千条数据**。
 > 现在 `import_external_jds.py` 和 `ingest.py` 都会在开头做唯一性自检。
 
+### 7. pip 镜像会偶发抽风，而报错完全误导
+
+我把自己做的"一键运行"克隆到干净目录测，`setup.py venv` 直接失败：
+
+```
+ERROR: Could not find a version that satisfies the requirement jieba>=0.42.1
+ERROR: No matching distribution found for jieba>=0.42.1
+```
+
+这句话看起来是"**jieba 这个包不存在**"或者"**Python 版本不支持**"。
+当时系统 Python 是 3.14，我一度以为是缺 cp314 的 wheel。
+
+**实际都不是。** 逐个包试装，7 个包**全部**报同样的错——
+真是版本问题不可能那么整齐。查下去发现：
+
+- 清华镜像的索引页**本身可达**（HTTP 200，60 KB）；
+- 用 pip **25.0.1** 走同一个镜像**成功**，pip **26.1.2** 失败；
+- 但几分钟后，pip 26.1.2 走清华、阿里云、中科大、官方源**全部成功**。
+
+**结论：镜像偶发抽风**，pip 把索引拉取失败报成了"找不到包"。
+
+**修复**：`setup.py` 改成**逐源回退**（清华 → 阿里云 → 中科大 → 官方），
+并加 `--retries 2 --timeout 30` 让坏源尽快暴露，而不是卡十分钟。
+
+> **教训**：报错信息会把人带到完全错误的方向。
+> 「所有包都报同一种错」＝**先怀疑源/网络，别怀疑包**。
+> 另外，**一键脚本必须有回退**——否则使用者会卡在一个看不懂的错误上，直接放弃。
+
 ---
 
 ## 七、当前局限（诚实说明）
