@@ -27,13 +27,15 @@ data/*
 !data/.gitkeep
 
 # ── 评测产物 ──
-# latest_results.json / rr*_pool*.json 是跑出来的结果，保留会有意义，
-# 但每次重跑都变，容易造成"README 数字和文件数字对不上"。
-# 这里选择**不提交**，README 里直接写清楚数字和复现命令。
+# 结果文件一律不进仓库：每次重跑都变，
+# 提交了会出现"README 写的数字和文件里的对不上"。
+# 每个数字都能用对应脚本重跑出来，README 里写了命令。
+eval/eval_set.json
 eval/latest_results.json
+eval/rerank_budget.json
+eval/adaptive_calibration.json
 eval/rr_pool*.json
 eval/rr2_pool*.json
-eval/eval_set.json
 docs/export_verify.txt
 docs/corpus_analysis.txt
 
