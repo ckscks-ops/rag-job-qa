@@ -1,0 +1,25 @@
+# 统一行尾，避免 Windows / Linux 协作时整个文件显示为"已修改"
+* text=auto
+
+# .bat 必须是 CRLF —— cmd.exe 对 LF-only 的批处理在 goto/label 上会出错
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 源码与文档用 LF
+*.py    text eol=lf
+*.md    text eol=lf
+*.txt   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+
+# 二进制，不要做行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.db    binary
+*.xlsx  binary
+*.zip   binary

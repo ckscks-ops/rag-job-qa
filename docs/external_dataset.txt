@@ -1,0 +1,28 @@
+工作表: ['Sheet1']
+
+=== 表 Sheet1 : 10114 行 x 11 列 ===
+列名: ['jobname', 'company', 'salary', 'city', 'description', 'other', 'label', 'minsalary', 'maxsalary', 'meansalary', 'city_idx']
+
+  jobname                非空 10113  示例: (Base深圳) 数据分析师/专家
+  company                非空  9205  示例: 货拉拉科技
+  salary                 非空 10114  示例: (25000.0, 50000.0)
+  city                   非空 10114  示例: 北京
+  description            非空 10109  示例: 岗位职责：
+1、搭建反映业务运营状况的数据指标体系；
+2、日常数据监控及周期性分析复盘、预警等；
+3、负责用户/司机侧运营分析工作，分析内容包括但不限于：市场环境分析、AARRR研
+  other                  非空  7608  示例: 年终奖，五险一金，交通补助，员工旅游，带薪年假，节日福利，零食下午茶
+  label                  非空 10114  示例: 数据分析
+  minsalary              非空 10114  示例: 25000.0
+  maxsalary              非空 10114  示例: 50000.0
+  meansalary             非空 10114  示例: 37500.0
+  city_idx               非空 10114  示例: 3
+
+  分类分布 (label):
+    数据分析                                2650
+    经济金融                                2095
+    生物统计                                1939
+    算法岗                                 1898
+    大模型相关                               1532
+
+  文本长度(description): min=1 中位=286 p95=758 max=5687

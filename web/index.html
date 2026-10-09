@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><text x='16' y='23' font-size='19' text-anchor='middle' fill='white' font-family='sans-serif'>R</text></svg>">
+<title>岗位检索对比演示台 · RAG 岗位智能问答</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#fff; --line:#e3e6ea; --line2:#eef1f4;
+    --ink:#1b1f24; --ink2:#5b6570; --ink3:#8b949e;
+    --kw:#c2410c; --kw-bg:#fff4ec; --kw-line:#f5c9a8;
+    --vc:#1d4ed8; --vc-bg:#eef3ff; --vc-line:#c2d3f8;
+    --hy:#0f766e; --hy-bg:#ecfbf8; --hy-line:#a7e3d9;
+    --warn:#b45309;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+  }
+  .wrap{max-width:1500px;margin:0 auto;padding:22px 20px 60px}
+
+  header h1{margin:0 0 4px;font-size:21px;letter-spacing:-.2px}
+  header .sub{color:var(--ink2);font-size:13px;margin-bottom:3px}
+  .stats{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0 18px}
+  .chip{
+    background:#fff;border:1px solid var(--line);border-radius:999px;
+    padding:3px 11px;font-size:12px;color:var(--ink2)
+  }
+  .chip b{color:var(--ink);font-weight:600}
+
+  .bar{display:flex;gap:10px;align-items:stretch;margin-bottom:10px}
+  #q{
+    flex:1;padding:11px 14px;font-size:15px;border:1px solid var(--line);
+    border-radius:9px;background:#fff;color:var(--ink);outline:none;
+    font-family:inherit;
+  }
+  #q:focus{border-color:#9db4d6;box-shadow:0 0 0 3px rgba(29,78,216,.08)}
+  #go{
+    padding:0 26px;font-size:15px;font-weight:600;border:0;border-radius:9px;
+    background:var(--ink);color:#fff;cursor:pointer;font-family:inherit;
+  }
+  #go:hover{background:#333a42}
+  #go:disabled{opacity:.45;cursor:default}
+  .rr{display:flex;align-items:center;gap:5px;padding:0 12px;border:1px solid var(--line);
+      border-radius:9px;background:#fff;font-size:13px;color:var(--ink2);cursor:pointer;white-space:nowrap}
+  .rr input{accent-color:#6d28d9;cursor:pointer}
+  .rr b{color:#6d28d9;font-weight:600}
+
+  .examples{display:flex;flex-wrap:wrap;gap:7px;margin-bottom:20px;align-items:center}
+  .examples .lab{color:var(--ink3);font-size:12px}
+  .ex{
+    background:#fff;border:1px solid var(--line);border-radius:7px;
+    padding:4px 10px;font-size:12.5px;color:var(--ink2);cursor:pointer;font-family:inherit;
+  }
+  .ex:hover{border-color:#b9c3ce;color:var(--ink)}
+  .ex.para{border-color:var(--vc-line);color:var(--vc);background:var(--vc-bg)}
+  .ex.term{border-color:var(--kw-line);color:var(--kw);background:var(--kw-bg)}
+
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  @media(max-width:1420px){.grid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:780px){.grid{grid-template-columns:1fr}}
+
+  .col{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column}
+  .col-hd{padding:11px 14px;border-bottom:1px solid var(--line2);display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .col-hd .t{font-weight:600;font-size:14.5px}
+  .col-hd .s{font-size:11.5px;color:var(--ink3)}
+  .col-hd .m{font-size:11.5px;color:var(--ink3);white-space:nowrap;text-align:right}
+  .col.keyword .col-hd{border-bottom-color:var(--kw-line);background:linear-gradient(0deg,var(--kw-bg),#fff)}
+  .col.vector  .col-hd{border-bottom-color:var(--vc-line);background:linear-gradient(0deg,var(--vc-bg),#fff)}
+  .col.hybrid  .col-hd{border-bottom-color:var(--hy-line);background:linear-gradient(0deg,var(--hy-bg),#fff)}
+  .col.rerank  .col-hd{border-bottom-color:#ddd0f5;background:linear-gradient(0deg,#f6f1ff,#fff)}
+  .col.keyword .col-hd .t{color:var(--kw)}
+  .col.vector  .col-hd .t{color:var(--vc)}
+  .col.hybrid  .col-hd .t{color:var(--hy)}
+  .col.rerank  .col-hd .t{color:#6d28d9}
+  .hit.re{border-color:#e6dcfa;background:#fdfcff}
+
+  .col-bd{padding:10px;display:flex;flex-direction:column;gap:9px;flex:1}
+
+  .hit{border:1px solid var(--line2);border-radius:9px;padding:9px 11px;background:#fff}
+  .hit .r1{display:flex;gap:8px;align-items:baseline;margin-bottom:3px}
+  .rk{
+    flex:none;width:19px;height:19px;border-radius:5px;background:#eef1f4;color:var(--ink2);
+    font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;
+  }
+  .hit:nth-child(1) .rk{background:var(--ink);color:#fff}
+  .co{font-weight:600;font-size:13px}
+  .ti{color:var(--ink2);font-size:12.5px}
+  .meta{display:flex;flex-wrap:wrap;gap:5px;align-items:center;margin:4px 0 5px}
+  .tag{font-size:11px;padding:1px 7px;border-radius:5px;background:#f1f3f6;color:var(--ink2);white-space:nowrap}
+  .tag.sec{background:#eef7ee;color:#2f6b3a}
+  .tag.src-k{background:var(--kw-bg);color:var(--kw);border:1px solid var(--kw-line)}
+  .tag.src-v{background:var(--vc-bg);color:var(--vc);border:1px solid var(--vc-line)}
+  .tag.both{background:var(--hy-bg);color:var(--hy);border:1px solid var(--hy-line);font-weight:600}
+  .sc{margin-left:auto;font-size:11.5px;color:var(--ink3);font-variant-numeric:tabular-nums}
+  .snip{font-size:12.5px;color:#414a54;line-height:1.55;
+        display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  mark{background:#fff3bf;color:#7a4b00;padding:0 1px;border-radius:2px}
+  .tokrow{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 12px}
+  .tokrow .lab{color:var(--ink3);font-size:12px;margin-right:2px}
+  .tok{background:#eef1f4;color:var(--ink2);font-size:11.5px;padding:1px 6px;border-radius:4px;font-family:ui-monospace,Consolas,monospace}
+
+  .empty{color:var(--ink3);font-size:12.5px;padding:18px 4px;text-align:center}
+  .msg{padding:26px 4px;text-align:center;color:var(--ink3);font-size:13px}
+  .err{background:#fff5f5;border:1px solid #f3c4c4;color:#a12a2a;padding:10px 13px;border-radius:9px;font-size:13px}
+
+  footer{margin-top:24px;color:var(--ink3);font-size:12px;line-height:1.8}
+  footer code{background:#eceff3;padding:1px 5px;border-radius:4px;font-size:11.5px}
+  a{color:var(--vc)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>岗位检索对比演示台</h1>
+    <div class="sub">
+      同一句查询，三种检索并排跑 —— 看它们各自在什么情况下失效
+    </div>
+    <div class="stats" id="stats"><span class="chip">加载中…</span></div>
+  </header>
+
+  <div class="bar">
+    <input id="q" placeholder="用日常说法提问，例如：偏业务、要给管理层做汇报的岗位" autocomplete="off">
+    <label class="rr" title="cross-encoder 精排：精度提升明显，但每个候选都要跑一次前向，明显更慢">
+      <input type="checkbox" id="useRerank" checked> 加 <b>精排</b>
+    </label>
+    <button id="go">检索</button>
+  </div>
+
+  <div class="examples">
+    <span class="lab">试试：</span>
+    <button class="ex para" data-q="偏业务、经常要给管理层做汇报的岗位">偏业务、要给管理层做汇报的岗位</button>
+    <button class="ex para" data-q="让机器自己开车的那些岗位">让机器自己开车的那些岗位</button>
+    <button class="ex para" data-q="管数据仓库、把散在各处的数据汇总起来的">管数据仓库、把数据汇总起来的</button>
+    <button class="ex term" data-q="算法岗要会 PyTorch">算法岗要会 PyTorch</button>
+    <button class="ex term" data-q="SQL 和 Excel 都要会">SQL 和 Excel 都要会</button>
+    <button class="ex" data-q="军工/兵器系统的单位">军工/兵器系统的单位</button>
+    <button class="ex" data-q="芜湖或者安徽的机会">芜湖或安徽的机会</button>
+  </div>
+
+  <div id="out">
+    <div class="msg">输入一句查询，或点上面的例子</div>
+  </div>
+
+  <footer>
+    语文料：<b id="f-docs">—</b> 条真实中文岗位 JD（两个来源合并去重），切为 <b id="f-chunks">—</b> 块<br>
+    向量：<code>fastembed</code> + <code>BAAI/bge-small-zh-v1.5</code>（512 维 ONNX，本地推理，不需要 PyTorch）<br>
+    说明：<span style="color:var(--vc)">蓝框</span>的例子是<b>口语化改写</b>（关键词检索容易失手），
+    <span style="color:var(--kw)">橙框</span>是<b>精确技术栈</b>（向量检索容易失手）。<br>
+    <b>精排</b>列是 cross-encoder：把 query 和 JD 拼在一起过模型，精度高但每个候选都要跑一次前向，
+    所以慢（约 6~12 秒，取决于候选长度）。分数是原始 logit，<b>只有相对顺序有意义</b>，负数不代表差。<br>
+    精排是<b>异步</b>的：前 3 列先出（约 200 ms），第 4 列算完再补上，不会卡住界面。<br>
+    完整评测：<code>python eval/evaluate.py</code> ·
+    接口文档：<a href="/docs">/docs</a>
+  </footer>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => (s == null ? '' : String(s)).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function fmtScore(v){
+  if (v == null) return '—';
+  if (Math.abs(v) >= 1) return v.toFixed(2);
+  if (Math.abs(v) >= 0.01) return v.toFixed(4);
+  return v.toFixed(5);
+}
+
+// 用 jieba 分词结果高亮命中词，让"为什么命中"变得可见
+let TOKENS = [];
+function highlight(text){
+  let out = esc(text);
+  const parts = TOKENS.filter(t => t && t.length >= 2)
+    .map(t => esc(t).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .sort((a, b) => b.length - a.length);
+  if (!parts.length) return out;
+  try{
+    return out.replace(new RegExp('(' + parts.join('|') + ')', 'gi'), '<mark>$1</mark>');
+  }catch(e){ return out; }
+}
+
+async function loadStats(){
+  try{
+    const r = await fetch('/health');
+    const d = await r.json();
+    const s = d.stats || {};
+    $('#stats').innerHTML = [
+      ['岗位', s.documents], ['切块', s.chunks],
+      ['向量', s.with_embedding], ['公司', s.companies],
+      ['embedding', d.embed_model], ['LLM', d.llm_configured ? '已配置' : '未配置']
+    ].map(([k,v]) => `<span class="chip">${k} <b>${esc(v)}</b></span>`).join('');
+    // footer 也动态填，免得语料换了之后这里还是旧数字
+    $('#f-docs').textContent = s.documents ?? '—';
+    $('#f-chunks').textContent = s.chunks ?? '—';
+  }catch(e){
+    $('#stats').innerHTML = '<span class="chip">无法读取 /health</span>';
+  }
+}
+
+function hitHTML(h, mode){
+  let src = '';
+  if (mode === 'hybrid' && h.from){
+    if (h.from.length > 1) src = '<span class="tag both">两路都命中</span>';
+    else if (h.from[0] === '关键词') src = '<span class="tag src-k">仅关键词</span>';
+    else src = '<span class="tag src-v">仅向量</span>';
+  }
+  return `<div class="hit">
+    <div class="r1">
+      <span class="rk">${h.rank}</span>
+      <span class="co">${esc(h.company) || '未知公司'}</span>
+      <span class="ti">${esc(h.title)}</span>
+    </div>
+    <div class="meta">
+      ${h.city ? `<span class="tag">${esc(h.city)}</span>` : ''}
+      ${h.section ? `<span class="tag sec">${esc(h.section)}</span>` : ''}
+      ${src}
+      <span class="sc" title="${
+        mode === 'rerank'
+          ? 'cross-encoder 输出的原始 logit。绝对值可以是负数，只有相对顺序有意义——排在前面的分更高。'
+          : '该路的原始打分（BM25 分 / 余弦相似度 / RRF 分）'
+      }">${fmtScore(h.score)}</span>
+    </div>
+    <div class="snip">${highlight(h.text)}</div>
+  </div>`;
+}
+
+function colHTML(key, m, mode){
+  const list = m.results || [];
+  const body = list.length
+    ? list.map(h => hitHTML(h, mode)).join('')
+    : '<div class="empty">这一路没有召回结果</div>';
+  return `<div class="col ${mode}">
+    <div class="col-hd">
+      <div><div class="t">${esc(m.label)}</div><div class="s">${esc(m.sublabel)}</div></div>
+      <div class="m">${mode === 'rerank' ? '精排池' : '召回池'} ${m.pool}<br>${
+        m.latency_ms >= 1000 ? (m.latency_ms/1000).toFixed(1) + ' s' : m.latency_ms + ' ms'}</div>
+    </div>
+    <div class="col-bd">${body}</div>
+  </div>`;
+}
+
+async function run(){
+  const q = $('#q').value.trim();
+  if (!q) return;
+  const wantRR = $('#useRerank').checked;
+  $('#go').disabled = true;
+  $('#out').innerHTML = '<div class="msg">检索中…<br><span style="font-size:12px">'
+    + '（服务冷启动后第一次调用要加载模型，约 20 秒）</span></div>';
+  try{
+    const base = '/compare?top_k=5&recall_k=30&q=' + encodeURIComponent(q);
+    // 第一批：关键词 / 向量 / 混合（约 250 ms，先出结果）
+    const d = await (await fetch(base)).json();
+    paint(d, null);
+    // 第二批：精排（约 6 秒，算完补上第四列）
+    if (wantRR){
+      try{
+        const d2 = await (await fetch(base + '&rerank=1&rerank_pool=20')).json();
+        paint(d, d2.modes.rerank);
+      }catch(e){
+        const ph = document.getElementById('rr-slot');
+        if (ph) ph.innerHTML = '<div class="err" style="margin:0">精排失败：' + esc(e.message) + '</div>';
+      }
+    }
+  }catch(e){
+    $('#out').innerHTML = `<div class="err">调用失败：${esc(e.message)}<br>
+      确认服务在运行（<code>python src/api.py</code>）。</div>`;
+  }finally{
+    $('#go').disabled = false;
+  }
+}
+
+// 渲染整页；rrMode 为 null 时第四列显示加载占位
+function paint(d, rrMode){
+  const M = d.modes, t = d.timing;
+  TOKENS = d.tokens || [];
+  const tokRow = TOKENS.length
+    ? `<div class="tokrow"><span class="lab">jieba 分词：</span>${
+         TOKENS.map(x => `<span class="tok">${esc(x)}</span>`).join('')}</div>`
+    : '';
+  const rrSlot = $('#useRerank').checked
+    ? (rrMode
+        ? colHTML('rerank', rrMode, 'rerank')
+        : `<div class="col rerank" id="rr-slot"><div class="col-hd">
+             <div><div class="t">混合 + 精排</div><div class="s">cross-encoder</div></div>
+             <div class="m">计算中…</div></div>
+           <div class="col-bd"><div class="empty">精排对 20 个候选逐个打分<br>约 6~12 秒（取决于候选长度）…</div></div></div>`)
+    : '';
+  $('#out').innerHTML =
+    `<div class="stats" style="margin:0 0 10px">
+       <span class="chip">查询 <b>${esc(d.query)}</b></span>
+       <span class="chip">召回池 <b>${d.recall_k}</b> / 每路取前 <b>${d.top_k}</b></span>
+       <span class="chip">embedding <b>${t.embed_ms} ms</b></span>
+       <span class="chip">BM25 <b>${t.keyword_ms} ms</b></span>
+       <span class="chip">向量扫描 <b>${t.vector_ms} ms</b></span>
+       <span class="chip">RRF <b>${t.rrf_ms} ms</b></span>
+     </div>
+     ${tokRow}
+     <div class="grid">
+       ${colHTML('keyword', M.keyword, 'keyword')}
+       ${colHTML('vector',  M.vector,  'vector')}
+       ${colHTML('hybrid',  M.hybrid,  'hybrid')}
+       ${rrSlot}
+     </div>`;
+}
+
+$('#go').onclick = run;
+$('#q').addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+document.querySelectorAll('.ex').forEach(b => {
+  b.onclick = () => { $('#q').value = b.dataset.q; run(); };
+});
+loadStats();
+$('#q').focus();
+
+// 支持 ?q=xxx 直接出结果，方便分享链接
+const _initQ = new URLSearchParams(location.search).get('q');
+if (_initQ){ $('#q').value = _initQ; run(); }
+</script>
+</body>
+</html>

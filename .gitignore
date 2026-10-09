@@ -1,0 +1,46 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── 虚拟环境 ──
+# 别人克隆后跑 `python setup.py venv` 自动重建
+.venv/
+venv/
+
+# ── 数据：全部不进仓库 ──
+#
+# 为什么不提交数据：
+#   1. `rag.db` 是**构建产物**（137 MB，含 26,454 条 512 维向量），
+#      别人 `python setup.py all` 就能重建；提交二进制到 git 也不合适。
+#   2. `external/*.xlsx` 是**第三方数据集**（原仓库没有 LICENSE），
+#      不该由本仓库再分发；`src/fetch_external_jds.py` 会按需下载。
+#   3. `prod_jobs*.json` 来自本机 RecruitOps 的数据库备份，
+#      别人的机器上没有那个软件，无从复现。
+#   4. `corpus.json` / `external_jobs.json` 都是上面两者的派生产物。
+#
+# 所以仓库里**只有代码和示例数据**（data/sample_jobs.json 保留，
+# 它是自测用的 10 条占位岗位，不含真实公司）。
+data/*
+!data/sample_jobs.json
+!data/.gitkeep
+
+# ── 评测产物 ──
+# latest_results.json / rr*_pool*.json 是跑出来的结果，保留会有意义，
+# 但每次重跑都变，容易造成"README 数字和文件数字对不上"。
+# 这里选择**不提交**，README 里直接写清楚数字和复现命令。
+eval/latest_results.json
+eval/rr_pool*.json
+eval/rr2_pool*.json
+eval/eval_set.json
+docs/export_verify.txt
+docs/corpus_analysis.txt
+
+# ── 编辑器 / 系统 ──
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+~$*

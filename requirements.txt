@@ -1,0 +1,48 @@
+# RAG 岗位问答系统 —— 依赖
+#
+# 安装（推荐清华镜像，实测默认源卡 19 分钟、镜像 30 秒）：
+#   .venv/Scripts/python.exe -m pip install -r requirements.txt \
+#       -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir
+#
+# ⚠️ 首次下载 embedding 模型前，先设好镜像（HuggingFace 直连国内不稳）：
+#   set HF_ENDPOINT=https://hf-mirror.com
+#   set HF_HUB_DISABLE_XET=1
+#   （Xet 是新版 huggingface_hub 的传输后端，走 cas-server.xethub.hf.co，
+#     镜像不代理它，会报 401 Unauthorized。必须关掉。）
+
+# ── 核心链路：分词 / 数值计算 / HTTP ──
+
+# 中文分词（纯 Python，无编译依赖）
+jieba>=0.42.1
+
+# 向量检索的数值计算（余弦相似度、矩阵运算）
+numpy>=1.24
+
+# 调用 DeepSeek 等 HTTP API（生成环节）
+requests>=2.31
+
+# 读开源数据集的 .xlsx。**故意不用 pandas**——
+# 这里只需要顺序读一个 sheet，openpyxl 只读模式够用，
+# 而 pandas 会多带约 12 MB 依赖 + 编译轮子。
+openpyxl>=3.1
+
+# ── 真实 embedding：ONNX 路线，**不需要 PyTorch** ──
+#
+# fastembed 用 onnxruntime 跑 BAAI/bge-small-zh-v1.5，
+# 模型约 95 MB + onnxruntime 约 60 MB，
+# 而 sentence-transformers 方案要拖 PyTorch 约 2 GB —— 实测后者没必要。
+#
+# 装完后：
+#   python tests/check_embedder.py     # 验证语义能力（相近词 vs 无关词）
+fastembed>=0.4
+
+# ── HTTP 服务 ──
+
+fastapi>=0.110
+uvicorn>=0.29
+
+# ────────────────────────────────────────────────
+# 可选替代：torch 版 embedding（本项目不用，仅存档）
+#   sentence-transformers>=2.7     # 约 2 GB，含 PyTorch
+#   embeddings.py 里已写好适配器：get_embedder('st')
+# ────────────────────────────────────────────────
