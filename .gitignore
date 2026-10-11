@@ -50,3 +50,15 @@ launcher.log
 Thumbs.db
 desktop.ini
 ~$*
+
+# 个人一次性推送工具
+推送到GitHub.bat
+
+# 国内网络用的本地隧道（个人环境工具）
+gh_tunnel.py
+
+# GitHub 本地隧道的调试日志（我的本机产物）
+tunnel.log
+
+# GitHub 本地隧道的调试日志（我的本机产物）
+tunnel.err
